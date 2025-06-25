@@ -1,8 +1,7 @@
 use clap::{ArgAction, Parser};
 use colored::Colorize;
 use std::{
-	fs,
-	io::{self, Read},
+	arch::x86_64, fs, io::{self, Read, Write}, path::Path, process::{Command, Output, Stdio}
 };
 
 #[derive(Parser)]
@@ -52,17 +51,21 @@ fn main() {
 	let args = Args::parse();
 
 	let mut source = Vec::new();
+	let filename: &str;
 	if args.file == "-" {
 		let Ok(n) = io::stdin().lock().read_to_end(&mut source) else {
 			println!("!!! Ошибка чтения из STDIN"); return;
 		};
+		filename = "main";
 	} else {
 		let Ok(text) = fs::read_to_string(&args.file) else {
 			println!("!!! ошибка чтения из файла"); return;
 		};
 		source = text.as_bytes().to_vec();
+		filename = match Path::new(&args.file).file_stem().and_then(|x| x.to_str()) {
+			Some(v) => v, None => {println!("!!! нет имени файла"); return;}
+		}
 	}
-	// filename
 
 	// проверка кода
 	let mut depth = 0usize;
@@ -105,5 +108,123 @@ fn main() {
 	}
 
 	// далее обработка кода
-	println!("s");
+	const indent: &str = "  ";
+	let mut counter = Counter::new();
+	let mut ir = format!(r#"; ModuleID = '{filename}'
+{indent}%tape     = alloca [{} x i8]
+{indent}%tape_ptr = alloca i8*
+{indent}%ptr0     = getelementptr [{} x i8], [{} x i8]* %tape, i32 0, i32 0
+{indent}store i8* %ptr0, i8** %tape_ptr        ; init tape pointer"#, args.cells, args.cells, args.cells);
+	let mut loop_stack: Vec<(String, String)> = Vec::new();
+	for c in source {
+		match c {
+			b'>' | b'<' => {
+				let ptr = counter.u();
+				let newptr = counter.u();
+				let offset = if c == b'>' {"1"} else {"-1"};
+				let sym = if c == b'>' {">"} else {"<"};
+				ir += &format!("\n{indent}; {sym}\n");
+				ir += &format!("{indent}%{ptr}    = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{indent}%{newptr} = getelementptr i8, i8* %{ptr}, i32 {offset}\n");
+				ir += &format!("{indent}store i8* %{newptr}, i8** %tape_ptr\n");
+			},
+			b'+' | b'-' => {
+				let ptr = counter.u();
+				let val = counter.u();
+				let mod_ = counter.u();
+				let op = if c == b'+' {"add"} else {"sub"};
+				let sym = if c == b'+' {"+"} else {"-"};
+				ir += &format!("\n{indent}; {sym}\n");
+				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{indent}%{val} = load i8, i8* %{ptr}\n");
+				ir += &format!("{indent}%{mod_} = {op} i8 %{val}, 1\n");
+				ir += &format!("{indent}store i8 %{mod_}, i8* %{ptr}\n");
+			},
+			b'.' => {
+				let ptr = counter.u();
+				let val = counter.u();
+				let ext = counter.u();
+				ir += &format!("\n{indent}; .\n");
+				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{indent}%{val} = load i8, i8* %{ptr}\n");
+				ir += &format!("{indent}%{ext} = sext i8 %{val} to i32\n");
+				ir += &format!("{indent}call i32 @putchar(i32 %{ext})\n");
+			},
+			b',' => {
+				let i_ = counter.u();
+				let t_ = counter.u();
+				let ptr = counter.u();
+				ir += &format!("\n{indent}; ,\n");
+				ir += &format!("{indent}%{i_}   = call i32 @getchar()\n");
+				ir += &format!("{indent}%{t_}   = trunc i32 %{i_} to i8\n");
+				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{indent}store i8 %{t_}, i8* %{ptr}\n");
+			},
+			b'[' => {
+				let lid = counter.u();
+				let s = format!("{lid}_start");
+				let b = format!("{lid}_body");
+				let e = format!("{lid}_end");
+				loop_stack.push((s.clone(), e.clone()));
+				let ptr = counter.u();
+				let val = counter.u();
+				let cmp = counter.u();
+				ir += &format!("\n{indent}; [\n");
+				ir += &format!("{indent}br label %{s}\n");
+				ir += &format!("{s}:\n");
+				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{indent}%{val} = load i8, i8* %{ptr}\n");
+				ir += &format!("{indent}%{cmp} = icmp eq i8 %{val}, 0\n");
+				ir += &format!("{indent}br i1 %{cmp}, label %{e}, label %{b}\n");
+				ir += &format!("{b}:\n");
+			},
+			b']' => {
+				let Some((s, e)) = loop_stack.pop() else {
+					println!("!!! нет s, e в loop_stack"); return;
+				};
+				ir += &format!("\n{indent}; ]\n");
+				ir += &format!("{indent}br label %{s}\n");
+				ir += &format!("{e}:\n");
+			},
+			_ => {}
+		};
+	};
+
+	// ... ?
+	ir += &format!("\n{indent}ret i32 0\n}}\n");
+	if args.emit_llvm {
+		if args.output == Some("-".to_owned()) {
+			let Ok(_) = io::stdout().lock().write_all(ir.as_bytes()) else {
+				println!("!!! Ошибка записи в STDOUT"); return;
+			};
+		} else {
+			let out = args.output.unwrap_or(format!("{filename}.ll"));
+			let Ok(_) = fs::write(out, ir.as_bytes()) else {
+				println!("!!! Ошибка записи в файл"); return;
+			};
+		}
+	} else {
+		let out = args.output.unwrap_or(filename.to_owned());
+		let mut cmd = Command::new("clang");
+		cmd.args(["-x", "ir", "-", "-o", &out]).stdin(Stdio::piped());
+		if !args.clang_flags.is_empty() {
+			cmd.args(args.clang_flags);
+		}
+		println!("{filename}: запуск компиляции...");
+		println!("{:?}", cmd);
+		let Ok(mut child) = cmd.spawn() else {
+			println!("!!! Ошибка запуска процесса"); return;
+		};
+		if let Some(mut stdin) = child.stdin.take() {
+			let Ok(_) = stdin.write_all(ir.as_bytes()) else {
+				println!("!!! Ошибка записи данных в STDIN процесса"); return;
+			};
+		}
+		let Ok(status) = child.wait() else {
+			println!("!!! Ошибка при получении статуса"); return;
+		};
+		if !status.success() {
+			eprintln!("!!! Компиляция завершилась с ошибкой: {status}");
+		}
+	}
 }
