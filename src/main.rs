@@ -1,7 +1,7 @@
 use clap::{ArgAction, Parser};
 use colored::Colorize;
 use std::{
-	arch::x86_64, fs, io::{self, Read, Write}, path::Path, process::{Command, Output, Stdio}
+	fs, io::{self, Read, Write}, path::Path, process::{Command, Stdio}
 };
 
 #[derive(Parser)]
@@ -53,7 +53,7 @@ fn main() {
 	let mut source = Vec::new();
 	let filename: &str;
 	if args.file == "-" {
-		let Ok(n) = io::stdin().lock().read_to_end(&mut source) else {
+		let Ok(_) = io::stdin().lock().read_to_end(&mut source) else {
 			println!("!!! Ошибка чтения из STDIN"); return;
 		};
 		filename = "main";
@@ -108,13 +108,13 @@ fn main() {
 	}
 
 	// далее обработка кода
-	const indent: &str = "  ";
+	const INDENT: &str = "  ";
 	let mut counter = Counter::new();
 	let mut ir = format!(r#"; ModuleID = '{filename}'
-{indent}%tape     = alloca [{} x i8]
-{indent}%tape_ptr = alloca i8*
-{indent}%ptr0     = getelementptr [{} x i8], [{} x i8]* %tape, i32 0, i32 0
-{indent}store i8* %ptr0, i8** %tape_ptr        ; init tape pointer"#, args.cells, args.cells, args.cells);
+{INDENT}%tape     = alloca [{} x i8]
+{INDENT}%tape_ptr = alloca i8*
+{INDENT}%ptr0     = getelementptr [{} x i8], [{} x i8]* %tape, i32 0, i32 0
+{INDENT}store i8* %ptr0, i8** %tape_ptr        ; init tape pointer"#, args.cells, args.cells, args.cells);
 	let mut loop_stack: Vec<(String, String)> = Vec::new();
 	for c in source {
 		match c {
@@ -123,10 +123,10 @@ fn main() {
 				let newptr = counter.u();
 				let offset = if c == b'>' {"1"} else {"-1"};
 				let sym = if c == b'>' {">"} else {"<"};
-				ir += &format!("\n{indent}; {sym}\n");
-				ir += &format!("{indent}%{ptr}    = load i8*, i8** %tape_ptr\n");
-				ir += &format!("{indent}%{newptr} = getelementptr i8, i8* %{ptr}, i32 {offset}\n");
-				ir += &format!("{indent}store i8* %{newptr}, i8** %tape_ptr\n");
+				ir += &format!("\n{INDENT}; {sym}\n");
+				ir += &format!("{INDENT}%{ptr}    = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{INDENT}%{newptr} = getelementptr i8, i8* %{ptr}, i32 {offset}\n");
+				ir += &format!("{INDENT}store i8* %{newptr}, i8** %tape_ptr\n");
 			},
 			b'+' | b'-' => {
 				let ptr = counter.u();
@@ -134,31 +134,31 @@ fn main() {
 				let mod_ = counter.u();
 				let op = if c == b'+' {"add"} else {"sub"};
 				let sym = if c == b'+' {"+"} else {"-"};
-				ir += &format!("\n{indent}; {sym}\n");
-				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
-				ir += &format!("{indent}%{val} = load i8, i8* %{ptr}\n");
-				ir += &format!("{indent}%{mod_} = {op} i8 %{val}, 1\n");
-				ir += &format!("{indent}store i8 %{mod_}, i8* %{ptr}\n");
+				ir += &format!("\n{INDENT}; {sym}\n");
+				ir += &format!("{INDENT}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{INDENT}%{val} = load i8, i8* %{ptr}\n");
+				ir += &format!("{INDENT}%{mod_} = {op} i8 %{val}, 1\n");
+				ir += &format!("{INDENT}store i8 %{mod_}, i8* %{ptr}\n");
 			},
 			b'.' => {
 				let ptr = counter.u();
 				let val = counter.u();
 				let ext = counter.u();
-				ir += &format!("\n{indent}; .\n");
-				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
-				ir += &format!("{indent}%{val} = load i8, i8* %{ptr}\n");
-				ir += &format!("{indent}%{ext} = sext i8 %{val} to i32\n");
-				ir += &format!("{indent}call i32 @putchar(i32 %{ext})\n");
+				ir += &format!("\n{INDENT}; .\n");
+				ir += &format!("{INDENT}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{INDENT}%{val} = load i8, i8* %{ptr}\n");
+				ir += &format!("{INDENT}%{ext} = sext i8 %{val} to i32\n");
+				ir += &format!("{INDENT}call i32 @putchar(i32 %{ext})\n");
 			},
 			b',' => {
 				let i_ = counter.u();
 				let t_ = counter.u();
 				let ptr = counter.u();
-				ir += &format!("\n{indent}; ,\n");
-				ir += &format!("{indent}%{i_}   = call i32 @getchar()\n");
-				ir += &format!("{indent}%{t_}   = trunc i32 %{i_} to i8\n");
-				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
-				ir += &format!("{indent}store i8 %{t_}, i8* %{ptr}\n");
+				ir += &format!("\n{INDENT}; ,\n");
+				ir += &format!("{INDENT}%{i_}   = call i32 @getchar()\n");
+				ir += &format!("{INDENT}%{t_}   = trunc i32 %{i_} to i8\n");
+				ir += &format!("{INDENT}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{INDENT}store i8 %{t_}, i8* %{ptr}\n");
 			},
 			b'[' => {
 				let lid = counter.u();
@@ -169,21 +169,21 @@ fn main() {
 				let ptr = counter.u();
 				let val = counter.u();
 				let cmp = counter.u();
-				ir += &format!("\n{indent}; [\n");
-				ir += &format!("{indent}br label %{s}\n");
+				ir += &format!("\n{INDENT}; [\n");
+				ir += &format!("{INDENT}br label %{s}\n");
 				ir += &format!("{s}:\n");
-				ir += &format!("{indent}%{ptr} = load i8*, i8** %tape_ptr\n");
-				ir += &format!("{indent}%{val} = load i8, i8* %{ptr}\n");
-				ir += &format!("{indent}%{cmp} = icmp eq i8 %{val}, 0\n");
-				ir += &format!("{indent}br i1 %{cmp}, label %{e}, label %{b}\n");
+				ir += &format!("{INDENT}%{ptr} = load i8*, i8** %tape_ptr\n");
+				ir += &format!("{INDENT}%{val} = load i8, i8* %{ptr}\n");
+				ir += &format!("{INDENT}%{cmp} = icmp eq i8 %{val}, 0\n");
+				ir += &format!("{INDENT}br i1 %{cmp}, label %{e}, label %{b}\n");
 				ir += &format!("{b}:\n");
 			},
 			b']' => {
 				let Some((s, e)) = loop_stack.pop() else {
 					println!("!!! нет s, e в loop_stack"); return;
 				};
-				ir += &format!("\n{indent}; ]\n");
-				ir += &format!("{indent}br label %{s}\n");
+				ir += &format!("\n{INDENT}; ]\n");
+				ir += &format!("{INDENT}br label %{s}\n");
 				ir += &format!("{e}:\n");
 			},
 			_ => {}
@@ -191,7 +191,7 @@ fn main() {
 	};
 
 	// ... ?
-	ir += &format!("\n{indent}ret i32 0\n}}\n");
+	ir += &format!("\n{INDENT}ret i32 0\n}}\n");
 	if args.emit_llvm {
 		if args.output == Some("-".to_owned()) {
 			let Ok(_) = io::stdout().lock().write_all(ir.as_bytes()) else {
@@ -224,7 +224,7 @@ fn main() {
 			println!("!!! Ошибка при получении статуса"); return;
 		};
 		if !status.success() {
-			eprintln!("!!! Компиляция завершилась с ошибкой: {status}");
+			println!("!!! Компиляция завершилась с ошибкой: {status}");
 		}
 	}
 }
