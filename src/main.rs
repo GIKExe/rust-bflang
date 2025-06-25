@@ -1,7 +1,7 @@
 use clap::{ArgAction, Parser};
 use colored::Colorize;
 use std::{
-	fs, io::{self, Read, Write}, path::Path, process::{Command, Stdio}
+	fs, io::{self, Read, Write}, panic, path::Path, process::{Command, Stdio}
 };
 
 #[derive(Parser)]
@@ -47,24 +47,21 @@ impl Counter {
 	}
 }
 
-fn main() {
+fn process() {
 	let args = Args::parse();
 
 	let mut source = Vec::new();
 	let filename: &str;
 	if args.file == "-" {
-		let Ok(_) = io::stdin().lock().read_to_end(&mut source) else {
-			println!("!!! Ошибка чтения из STDIN"); return;
-		};
+		let _ = io::stdin().lock().read_to_end(&mut source)
+			.expect("!!! Ошибка чтения из STDIN");
 		filename = "main";
 	} else {
-		let Ok(text) = fs::read_to_string(&args.file) else {
-			println!("!!! ошибка чтения из файла"); return;
-		};
+		let text = fs::read_to_string(&args.file)
+			.expect("!!! Ошибка чтения из файла");
 		source = text.as_bytes().to_vec();
-		filename = match Path::new(&args.file).file_stem().and_then(|x| x.to_str()) {
-			Some(v) => v, None => {println!("!!! нет имени файла"); return;}
-		}
+		filename = Path::new(&args.file).file_stem().and_then(|x| x.to_str())
+			.expect("!!! Нет имени файла");
 	}
 
 	// проверка кода
@@ -76,9 +73,8 @@ fn main() {
 			if depth == 0 {
 				// типо выводим ошибку?
 				let line = source[..i].iter().filter(|&x| *x == b'\n').count() + 1;
-				let col = i - match source[..i].iter().rposition(|&x| x == b'\n') {
-					Some(v) => v, None => {println!("!!! перенос строки не найден"); return;}
-				};
+				let col = i - source[..i].iter().rposition(|&x| x == b'\n')
+					.expect("!!! Перенос строки не найден");
 				let lines: Vec<&[u8]> = source.split(|x: &u8| *x == b'\n').collect();
 				let snippet = String::from_utf8_lossy(lines[line - 1]);
 				let pointer = " ".repeat(col - 1) + "^";
@@ -91,14 +87,12 @@ fn main() {
 	}
 	if depth > 0 {
 		// типо выводим ошибку?
-		let Some(i) = source.iter().rposition(|x| *x == b'[') else {
-			println!("!!! Перенос строки не найден"); return;
-		};
+		let i = source.iter().rposition(|x| *x == b'[')
+			.expect("!!! Открывающая скобка не найдена");
 
 		let line = source[..i].iter().filter(|&x| *x == b'\n').count() + 1;
-		let col = i - match source[..i].iter().rposition(|&x| x == b'\n') {
-			Some(v) => v, None => {println!("!!! перенос строки не найден"); return;}
-		};
+		let col = i - source[..i].iter().rposition(|&x| x == b'\n')
+			.expect("!!! Перенос строки не найден");
 		let lines: Vec<&[u8]> = source.split(|x: &u8| *x == b'\n').collect();
 		let snippet = String::from_utf8_lossy(lines[line - 1]);
 		let pointer = " ".repeat(col - 1) + "^";
@@ -183,9 +177,8 @@ define i32 @main() {{
 				ir += &format!("{b}:\n");
 			},
 			b']' => {
-				let Some((s, e)) = loop_stack.pop() else {
-					println!("!!! нет s, e в loop_stack"); return;
-				};
+				let (s, e) = loop_stack.pop()
+					.expect("!!! Нет s, e в loop_stack");
 				ir += &format!("\n{INDENT}; ]\n");
 				ir += &format!("{INDENT}br label %{s}\n");
 				ir += &format!("{e}:\n");
@@ -198,14 +191,12 @@ define i32 @main() {{
 	ir += &format!("\n{INDENT}ret i32 0\n}}\n");
 	if args.emit_llvm {
 		if args.output == Some("-".to_owned()) {
-			let Ok(_) = io::stdout().lock().write_all(ir.as_bytes()) else {
-				println!("!!! Ошибка записи в STDOUT"); return;
-			};
+			io::stdout().lock().write_all(ir.as_bytes())
+				.expect("!!! Ошибка записи в STDOUT");
 		} else {
 			let out = args.output.unwrap_or(format!("{filename}.ll"));
-			let Ok(_) = fs::write(out, ir.as_bytes()) else {
-				println!("!!! Ошибка записи в файл"); return;
-			};
+			fs::write(out, ir.as_bytes())
+				.expect("!!! Ошибка записи в файл");
 		}
 	} else {
 		let out = args.output.unwrap_or(filename.to_owned());
@@ -216,19 +207,21 @@ define i32 @main() {{
 		}
 		println!("{filename}: запуск компиляции...");
 		println!("{:?}", cmd);
-		let Ok(mut child) = cmd.spawn() else {
-			println!("!!! Ошибка запуска процесса"); return;
-		};
+		let mut child = cmd.spawn().expect("!!! Ошибка запуска процесса");
 		if let Some(mut stdin) = child.stdin.take() {
-			let Ok(_) = stdin.write_all(ir.as_bytes()) else {
-				println!("!!! Ошибка записи данных в STDIN процесса"); return;
-			};
+			stdin.write_all(ir.as_bytes()).expect("!!! Ошибка записи данных в STDIN процесса");
 		}
-		let Ok(status) = child.wait() else {
-			println!("!!! Ошибка при получении статуса"); return;
-		};
+		let status = child.wait().expect("!!! Ошибка при получении статуса");
 		if !status.success() {
 			println!("!!! Компиляция завершилась с ошибкой: {status}");
 		}
+	}
+}
+
+fn main() {
+	let result = panic::catch_unwind(|| { process(); });
+	match result {
+		Ok(_) => println!("Программа завершилась без ошибок"),
+		Err(e) => println!("{e:?}"),
 	}
 }
