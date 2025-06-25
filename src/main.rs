@@ -111,6 +111,10 @@ fn main() {
 	const INDENT: &str = "  ";
 	let mut counter = Counter::new();
 	let mut ir = format!(r#"; ModuleID = '{filename}'
+declare i32 @putchar(i32)
+declare i32 @getchar()
+
+define i32 @main() {{
 {INDENT}%tape     = alloca [{} x i8]
 {INDENT}%tape_ptr = alloca i8*
 {INDENT}%ptr0     = getelementptr [{} x i8], [{} x i8]* %tape, i32 0, i32 0
